@@ -10,7 +10,7 @@ function params(req, res, next) {
   
   // If multiple URLs are passed, join them together. This behavior might be revisited based on the expected usage.
   if (Array.isArray(url)) url = url.join('&url=');
-  if (!url) return res.end('bandwidth-hero-proxy');
+  if (!url) return res.end('(^///^) This should be working!');
   
   // Corrects some specific URL formatting issues.
   url = url.replace(/http:\/\/1\.1\.\d\.\d\/bmi\/(https?:\/\/)?/i, 'http://');
