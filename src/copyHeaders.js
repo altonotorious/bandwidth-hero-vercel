@@ -6,30 +6,37 @@ function copyHeaders(source, target, additionalExcludedHeaders = [], transformFu
 
     // Default headers to exclude, can be extended via function parameters.
     const defaultExcludedHeaders = ['host', 'connection', 'authorization', 'cookie', 'set-cookie', 'content-length', 'transfer-encoding'];
-    const excludedHeaders = [...new Set(defaultExcludedHeaders.concat(additionalExcludedHeaders))]; // Combine and deduplicate arrays.
-
+    // Combine, deduplicate arrays, and create a Set for efficient exclusion checking.
+    const excludedHeaders = new Set(defaultExcludedHeaders.concat(additionalExcludedHeaders).map(header => header.toLowerCase())); // Ensure lower case for case-insensitive comparison.
+    
     // Iterate through the source headers.
     for (const [key, value] of Object.entries(source.headers)) {
         const headerKeyLower = key.toLowerCase();
 
-        // Skip excluded headers.
-        if (excludedHeaders.includes(headerKeyLower)) {
+        // Skip excluded headers using the Set's efficient lookup.
+        if (excludedHeaders.has(headerKeyLower)) {
             continue;
         }
 
-        // Check if there's a transform function and apply it.
+        // Initialize transformedValue with the original value in case there's no transformation needed.
         let transformedValue = value;
+
+        // Check if there's a transform function, apply it, and handle its response appropriately.
         if (transformFunction && typeof transformFunction === 'function') {
             try {
-                const result = transformFunction(key, value);
+                const transformationResult = transformFunction(key, value);
 
                 // If the transformation result is null, remove the header.
-                if (result === null) {
-                    // Here, you might want to log the header's removal or perform another action.
-                    continue; // Skip to the next header.
-                }
+                if (transformationResult !== undefined) {
+                    // If the transformation result is explicitly null, skip setting this header.
+                    if (transformationResult === null) {
+                        continue; // Skip to the next header without logging an error.
+                    }
 
-                transformedValue = result; // Could be a new value, or an array of values, or the same value.
+                    // Apply the transformation result to the header.
+                    transformedValue = transformationResult;
+                }
+                // If transformationResult is undefined, it means no change to the header value.
             } catch (error) {
                 console.error(`Error transforming header '${key}': ${error.message}`);
                 continue; // Skip this header if an error occurs during transformation.

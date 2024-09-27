@@ -1,64 +1,78 @@
 const sharp = require('sharp');
 const redirect = require('./redirect');
 const isAnimated = require('is-animated');
-const { execFile } = require('child_process');
-const gif2webp = require('gif2webp-bin');
-const fs = require('fs').promises;
-const os = require('os');
+const { execFile } = require('node:child_process');
+const fs = require('node:fs/promises');
+const os = require('node:os');
 const { URL } = require('url');
 async function compress(req, res, input) {
-    const format = req.params.webp ? 'webp' : 'jpeg';
+    const format = req.params.webp ? 'avif' : 'jpeg';
     const originType = req.params.originType;
-    if (!req.params.grayscale && format === 'webp' && originType.endsWith('gif') && isAnimated(input)) {
-        try {
-            const { hostname, pathname } = new URL(req.params.url);
-            const path = `${os.tmpdir()}/${hostname + encodeURIComponent(pathname)}`;
-            await fs.writeFile(`${path}.gif`, input);
-            execFile(gif2webp, ['-lossy', '-m', 2, '-q', req.params.quality, '-mt', `${path}.gif`, '-o', `${path}.webp`], async (convErr) => {
-                if (convErr) {
-                    console.error("Error in conversion:", convErr);
-                    return redirect(req, res);
-                }
-                console.log('GIF Image converted!');
-                const data = await fs.readFile(`${path}.webp`);
-                sendImage(res, data, 'webp', req.params.url, req.params.originSize);
-                
-                await fs.unlink(`${path}.gif`);
-                await fs.unlink(`${path}.webp`);
-            });
-        } catch (error) {
-            console.error("Error in GIF processing:", error);
-            redirect(req, res);
-        }
-    } else {
-        sharp(input)
-            .metadata(async (err, metadata) => {
-                if (err) {
-                    console.error("Error fetching metadata:", err);
-                    return redirect(req, res);
-                }
-                let pixelCount = metadata.width * metadata.height;
-                let compressionQuality = adjustCompressionQuality(pixelCount, metadata.size, req.params.quality);
-                
+    sharp(input)
+        .metadata(async (err, metadata) => {
+            if (err) {
+                console.error("Error fetching metadata:", err);
+                return redirect(req, res);
+            }
+            let pixelCount = metadata.width * metadata.height;
+            let compressionQuality = adjustCompressionQuality(pixelCount, metadata.size, req.params.quality);
+            if (format === 'avif' && isAnimated(input)) {
+                sharp(input, { animated: true })
+                    .grayscale(req.params.grayscale)
+                    // Sharpen the image to enhance details
+                    .sharpen(1, 1, 0.5) // (sigma, flat, jagged) for moderate sharpening without overdoing it
+                    // Apply gamma correction for better brightness and contrast
+                    .gamma(2.2) // Adjust gamma (typical gamma is around 2.2)
+                    // Modulate brightness, saturation, and hue to enhance colors
+                    .modulate({
+                        brightness: 1.1, // Slightly brighten the image (1 = no change)
+                        saturation: 1.2, // Enhance colors (1 = no change)
+                        hue: 0 // No hue shift
+                    })
+                    // Optionally, apply a slight blur to smooth out noise (use median for denoising)
+                    .median(3) // aggressive noise reduction, good for low-quality images
+                    .toFormat(format, {
+                        quality: compressionQuality, //output image quality.
+                        chromaSubsampling: '4:2:0',
+                        loop: 0
+                    })
+                    .toBuffer()
+                    .then(output => {
+                        sendImage(res, output, format, req.params.url, req.params.originSize);
+                    })
+                    .catch(err => {
+                        console.error("Error in image compression:", err);
+                        redirect(req, res);
+                    });
+            } else {
                 sharp(input)
                     .grayscale(req.params.grayscale)
-                    .toFormat(format, {
-                        quality: compressionQuality,
-                        smartSubsample: true, // When true, enables 4:2:0 chroma subsampling. Often smaller file size without significant quality loss.
-                        reductionEffort: 6, // Level of CPU effort to reduce file size, integer between 0 and 6. Higher is slower but produces smaller images.
-                        alphaQuality: 100, // Sets the quality of the alpha layer of the image (0-100). Only relevant if your images have transparency
-                        progressive: true,
-                        optimizeScans: true
+                    // Sharpen the image to enhance details
+                    .sharpen(1, 1, 0.5) // (sigma, flat, jagged) for moderate sharpening without overdoing it
+                    // Apply gamma correction for better brightness and contrast
+                    .gamma(2.2) // Adjust gamma (typical gamma is around 2.2)
+                    // Modulate brightness, saturation, and hue to enhance colors
+                    .modulate({
+                        brightness: 1.1, // Slightly brighten the image (1 = no change)
+                        saturation: 1.2, // Enhance colors (1 = no change)
+                        hue: 0 // No hue shift
                     })
-                    .toBuffer((err, output, info) => {
-                        if (err || !info || res.headersSent) {
-                            console.error("Error in image compression:", err);
-                            return redirect(req, res);
-                        }
+                    // Optionally, apply a slight blur to smooth out noise (use median for denoising)
+                    .median(3) // aggressive noise reduction, good for low-quality images
+                    .toFormat(format, {
+                        chromaSubsampling: '4:2:0',
+                        quality: compressionQuality //output image quality.
+                    })
+                    .toBuffer()
+                    .then(output => {
                         sendImage(res, output, format, req.params.url, req.params.originSize);
+                    })
+                    .catch(err => {
+                        console.error("Error in image compression:", err);
+                        redirect(req, res);
                     });
-            });
-    }
+            }
+        });
 }
 
 //t
@@ -88,10 +102,15 @@ function adjustCompressionQuality(pixelCount, size, quality) {
 function sendImage(res, data, imgFormat, url, originSize) {
     res.setHeader('content-type', `image/${imgFormat}`);
     res.setHeader('content-length', data.length);
-    let filename = (new URL(url).pathname.split('/').pop() || "image") + '.' + imgFormat;
-    res.setHeader('Content-Disposition', 'inline; filename="' + filename + '"');
-    res.setHeader('x-original-size', originSize);
-    res.setHeader('x-bytes-saved', originSize - data.length);
+    let filename = encodeURIComponent(new URL(url).pathname.split('/').pop() || "image") + '.' + imgFormat;
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    // Ensure x-original-size is a positive integer
+    let safeOriginSize = Math.max(originSize, 0);
+    res.setHeader('x-original-size', safeOriginSize);
+    // Calculate bytes saved and ensure it's not negative
+    let bytesSaved = Math.max(safeOriginSize - data.length, 0);
+    res.setHeader('x-bytes-saved', bytesSaved);
     res.status(200);
     res.end(data);
 }

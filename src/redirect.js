@@ -13,10 +13,13 @@ function isValidUrl(urlString) {
     }
 
     try {
-        const parsedUrl = new URL(urlString); // Parsing might throw an error for invalid URLs
+        // Normalize the URL to ensure consistency
+        const normalizedUrl = normalizeUrl(urlString);
+        const parsedUrl = new URL(normalizedUrl); // Parsing might throw an error for invalid URLs.
 
-        // Check if the URL uses an acceptable protocol (http or https).
-        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+        // Check if the URL uses an acceptable protocol.
+        const allowedProtocols = ['http:', 'https:']; // Add other allowed schemes as needed
+        if (!allowedProtocols.includes(parsedUrl.protocol)) {
             console.error(`Invalid URL protocol: ${parsedUrl.protocol}`);
             return false;
         }
@@ -32,6 +35,10 @@ function isValidUrl(urlString) {
     }
 }
 
+function normalizeUrl(urlString) {
+    // Remove trailing slashes and normalize percent encoding
+    return urlString.trim().replace(/\/+$/, '').replace(/%20/g, ' ');
+}
 
 function redirect(req, res, statusCode = 302) {
     if (!req.params.url) {
@@ -64,14 +71,14 @@ function redirect(req, res, statusCode = 302) {
     console.log(`Redirecting client to ${req.params.url} with status code ${statusCode}.`);
 
     if (statusCode === 302) {
-            // Adding HTML body as an extra measure for clients that don't follow redirects
-            res.status(statusCode).send(`<html>
-    <head><meta http-equiv="refresh" content="0;url=${encodeURI(req.params.url)}"></head>
-    <body></body>
-    </html>`);
-        } else {
-            res.status(statusCode).end();
-        }
+        // Adding HTML body as an extra measure for clients that don't follow redirects
+        res.status(statusCode).send(`<html>
+        <head><meta http-equiv="refresh" content="0;url=${encodeURI(req.params.url)}"></head>
+        <body></body>
+        </html>`);
+    } else {
+        res.status(statusCode).end();
     }
+}
 
 module.exports = redirect;
